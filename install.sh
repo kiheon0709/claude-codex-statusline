@@ -54,8 +54,10 @@ else
   BACKUP=""
 fi
 
-# Merge using node (guaranteed available — Claude Code requires it)
-node - "$SETTINGS" "$CLAUDE_HOME" <<'NODE_SCRIPT'
+# Merge using node (guaranteed available — Claude Code requires it).
+# Unset NODE_OPTIONS so wrappers like cmux don't inject preload modules
+# whose temp paths aren't valid in the spawned subprocess.
+env -u NODE_OPTIONS node - "$SETTINGS" "$CLAUDE_HOME" <<'NODE_SCRIPT'
 const fs = require('fs');
 const path = require('path');
 

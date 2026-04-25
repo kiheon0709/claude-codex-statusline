@@ -27,7 +27,7 @@ fi
 cp "$SETTINGS" "$BACKUP"
 echo "==> Backed up settings.json → $BACKUP"
 
-node - "$SETTINGS" <<'NODE_SCRIPT'
+env -u NODE_OPTIONS node - "$SETTINGS" <<'NODE_SCRIPT'
 const fs = require('fs');
 
 const settingsPath = process.argv[2];
