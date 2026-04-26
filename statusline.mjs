@@ -161,24 +161,38 @@ function formatStatus(d) {
   // ── Group 2: 5H, Week, Context ────────────────────────────────────────────
   const fiveH = d.rate_limits?.five_hour;
   if (fiveH) {
-    const pct = fiveH.used_percentage ?? 0;
-    const rounded = Math.round(pct);
-    const reset = fmtReset(fiveH.resets_at);
-    const resetStr = reset ? color(` (${reset})`, C.textDim) : '';
-    const prefix = budgetPrefix(pct);
-    const t = prefix + color('5H ', C.text5H) + bar(pct, 10, C.bar5H) + color(` ${rounded}%`, C.text5H) + resetStr;
-    group2.push({ text: t, len: visLen(t) });
+    const nowSec = Math.floor(Date.now() / 1000);
+    const isStale = fiveH.resets_at && fiveH.resets_at < nowSec;
+    if (isStale) {
+      const t = color('5H ', C.text5H) + bar(0, 10, C.bar5H) + color(' 0%', C.text5H) + color(' (ready)', C.textDim);
+      group2.push({ text: t, len: visLen(t) });
+    } else {
+      const pct = fiveH.used_percentage ?? 0;
+      const rounded = Math.round(pct);
+      const reset = fmtReset(fiveH.resets_at);
+      const resetStr = reset ? color(` (${reset})`, C.textDim) : '';
+      const prefix = budgetPrefix(pct);
+      const t = prefix + color('5H ', C.text5H) + bar(pct, 10, C.bar5H) + color(` ${rounded}%`, C.text5H) + resetStr;
+      group2.push({ text: t, len: visLen(t) });
+    }
   }
 
   const sevenD = d.rate_limits?.seven_day;
   if (sevenD) {
-    const pct = sevenD.used_percentage ?? 0;
-    const rounded = Math.round(pct);
-    const reset = fmtReset(sevenD.resets_at);
-    const resetStr = reset ? color(` (${reset})`, C.textDim) : '';
-    const prefix = budgetPrefix(pct);
-    const t = prefix + color('Week ', C.textWeek) + bar(pct, 10, C.barWeek) + color(` ${rounded}%`, C.textWeek) + resetStr;
-    group2.push({ text: t, len: visLen(t) });
+    const nowSec = Math.floor(Date.now() / 1000);
+    const isStale = sevenD.resets_at && sevenD.resets_at < nowSec;
+    if (isStale) {
+      const t = color('Week ', C.textWeek) + bar(0, 10, C.barWeek) + color(' 0%', C.textWeek) + color(' (ready)', C.textDim);
+      group2.push({ text: t, len: visLen(t) });
+    } else {
+      const pct = sevenD.used_percentage ?? 0;
+      const rounded = Math.round(pct);
+      const reset = fmtReset(sevenD.resets_at);
+      const resetStr = reset ? color(` (${reset})`, C.textDim) : '';
+      const prefix = budgetPrefix(pct);
+      const t = prefix + color('Week ', C.textWeek) + bar(pct, 10, C.barWeek) + color(` ${rounded}%`, C.textWeek) + resetStr;
+      group2.push({ text: t, len: visLen(t) });
+    }
   }
 
   const ctx = d.context_window;
