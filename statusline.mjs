@@ -129,7 +129,7 @@ function fmtElapsed(ms) {
 }
 
 function formatStatus(d) {
-  const MARGIN = 15;
+  const MARGIN = 20;
 
   // Part A: prefer width from stdin JSON payload before falling back to TTY detection
   const jsonWidth =
@@ -142,6 +142,10 @@ function formatStatus(d) {
 
   // Part B: subtract safety margin for Claude Code TUI padding/borders
   const termWidth = Math.max(20, rawWidth - MARGIN);
+
+  // Adaptive bar width: full bars at wide terminals, shorter or none when narrow.
+  // Use rawWidth (pre-margin) so thresholds align with the terminal's actual column count.
+  const barW = rawWidth >= 80 ? 10 : rawWidth >= 60 ? 5 : 0;
 
   const group1 = [];
   const group2 = [];
@@ -164,15 +168,18 @@ function formatStatus(d) {
     const nowSec = Math.floor(Date.now() / 1000);
     const isStale = fiveH.resets_at && fiveH.resets_at < nowSec;
     if (isStale) {
-      const t = color('5H ', C.text5H) + bar(0, 10, C.bar5H) + color(' 0%', C.text5H) + color(' (ready)', C.textDim);
+      const sp = barW > 0 ? ' ' : '';
+      const readyStr = barW === 0 ? '' : color(' (ready)', C.textDim);
+      const t = color('5H ', C.text5H) + bar(0, barW, C.bar5H) + color(`${sp}0%`, C.text5H) + readyStr;
       group2.push({ text: t, len: visLen(t) });
     } else {
+      const sp = barW > 0 ? ' ' : '';
       const pct = fiveH.used_percentage ?? 0;
       const rounded = Math.round(pct);
       const reset = fmtReset(fiveH.resets_at);
-      const resetStr = reset ? color(` (${reset})`, C.textDim) : '';
+      const resetStr = (reset && barW > 0) ? color(` (${reset})`, C.textDim) : '';
       const prefix = budgetPrefix(pct);
-      const t = prefix + color('5H ', C.text5H) + bar(pct, 10, C.bar5H) + color(` ${rounded}%`, C.text5H) + resetStr;
+      const t = prefix + color('5H ', C.text5H) + bar(pct, barW, C.bar5H) + color(`${sp}${rounded}%`, C.text5H) + resetStr;
       group2.push({ text: t, len: visLen(t) });
     }
   }
@@ -182,15 +189,18 @@ function formatStatus(d) {
     const nowSec = Math.floor(Date.now() / 1000);
     const isStale = sevenD.resets_at && sevenD.resets_at < nowSec;
     if (isStale) {
-      const t = color('Week ', C.textWeek) + bar(0, 10, C.barWeek) + color(' 0%', C.textWeek) + color(' (ready)', C.textDim);
+      const sp = barW > 0 ? ' ' : '';
+      const readyStr = barW === 0 ? '' : color(' (ready)', C.textDim);
+      const t = color('Week ', C.textWeek) + bar(0, barW, C.barWeek) + color(`${sp}0%`, C.textWeek) + readyStr;
       group2.push({ text: t, len: visLen(t) });
     } else {
+      const sp = barW > 0 ? ' ' : '';
       const pct = sevenD.used_percentage ?? 0;
       const rounded = Math.round(pct);
       const reset = fmtReset(sevenD.resets_at);
-      const resetStr = reset ? color(` (${reset})`, C.textDim) : '';
+      const resetStr = (reset && barW > 0) ? color(` (${reset})`, C.textDim) : '';
       const prefix = budgetPrefix(pct);
-      const t = prefix + color('Week ', C.textWeek) + bar(pct, 10, C.barWeek) + color(` ${rounded}%`, C.textWeek) + resetStr;
+      const t = prefix + color('Week ', C.textWeek) + bar(pct, barW, C.barWeek) + color(`${sp}${rounded}%`, C.textWeek) + resetStr;
       group2.push({ text: t, len: visLen(t) });
     }
   }
@@ -200,7 +210,8 @@ function formatStatus(d) {
     const pct = ctx.used_percentage ?? 0;
     const rounded = Math.round(pct);
     // Context: no budget prefix (ephemeral, different semantics)
-    const t = color('Context ', C.textContext) + bar(pct, 10, C.barContext) + color(` ${rounded}%`, C.textContext);
+    const sp = barW > 0 ? ' ' : '';
+    const t = color('Context ', C.textContext) + bar(pct, barW, C.barContext) + color(`${sp}${rounded}%`, C.textContext);
     group2.push({ text: t, len: visLen(t) });
   }
 
@@ -213,29 +224,33 @@ function formatStatus(d) {
     // #4: Stale indicator — when resets_at < now, show dash instead of pct
     const fiveHStale = !!(primary.resets_at && primary.resets_at < nowSec);
     if (fiveHStale) {
-      const t1 = color('Codex 5H ', C.barStale) + bar(0, 10, C.barStale) + color(' —', C.barStale);
+      const sp = barW > 0 ? ' ' : '';
+      const t1 = color('Codex 5H ', C.barStale) + bar(0, barW, C.barStale) + color(`${sp}—`, C.barStale);
       group3.push({ text: t1, len: visLen(t1) });
     } else {
+      const sp = barW > 0 ? ' ' : '';
       const fiveHPct = primary.used_percent ?? 0;
       const fiveHRounded = Math.round(fiveHPct);
       const fiveHReset = fmtReset(primary.resets_at);
-      const fiveHResetStr = fiveHReset ? color(` (${fiveHReset})`, C.textDim) : '';
+      const fiveHResetStr = (fiveHReset && barW > 0) ? color(` (${fiveHReset})`, C.textDim) : '';
       const fiveHPrefix = budgetPrefix(fiveHPct);
-      const t1 = fiveHPrefix + color('Codex 5H ', C.textCodex5H) + bar(fiveHPct, 10, C.barCodex5H) + color(` ${fiveHRounded}%`, C.textCodex5H) + fiveHResetStr;
+      const t1 = fiveHPrefix + color('Codex 5H ', C.textCodex5H) + bar(fiveHPct, barW, C.barCodex5H) + color(`${sp}${fiveHRounded}%`, C.textCodex5H) + fiveHResetStr;
       group3.push({ text: t1, len: visLen(t1) });
     }
 
     const sevenDStale = !!(secondary.resets_at && secondary.resets_at < nowSec);
     if (sevenDStale) {
-      const t2 = color('Codex Week ', C.barStale) + bar(0, 10, C.barStale) + color(' —', C.barStale);
+      const sp = barW > 0 ? ' ' : '';
+      const t2 = color('Codex Week ', C.barStale) + bar(0, barW, C.barStale) + color(`${sp}—`, C.barStale);
       group3.push({ text: t2, len: visLen(t2) });
     } else {
+      const sp = barW > 0 ? ' ' : '';
       const sevenDPct = secondary.used_percent ?? 0;
       const sevenDRounded = Math.round(sevenDPct);
       const sevenDReset = fmtReset(secondary.resets_at);
-      const sevenDResetStr = sevenDReset ? color(` (${sevenDReset})`, C.textDim) : '';
+      const sevenDResetStr = (sevenDReset && barW > 0) ? color(` (${sevenDReset})`, C.textDim) : '';
       const sevenDPrefix = budgetPrefix(sevenDPct);
-      const t2 = sevenDPrefix + color('Codex Week ', C.textCodexWeek) + bar(sevenDPct, 10, C.barCodexWeek) + color(` ${sevenDRounded}%`, C.textCodexWeek) + sevenDResetStr;
+      const t2 = sevenDPrefix + color('Codex Week ', C.textCodexWeek) + bar(sevenDPct, barW, C.barCodexWeek) + color(`${sp}${sevenDRounded}%`, C.textCodexWeek) + sevenDResetStr;
       group3.push({ text: t2, len: visLen(t2) });
     }
   }
@@ -272,6 +287,7 @@ function sep() {
 }
 
 function bar(pct, width, colorCode) {
+  if (width === 0) return '';
   const filled = Math.round((pct / 100) * width);
   const empty = width - filled;
   return `\x1b[${colorCode}m${'█'.repeat(filled)}${'░'.repeat(empty)}\x1b[0m`;

@@ -74,7 +74,7 @@ try {
 // -- statusLine --
 settings.statusLine = {
   type: 'command',
-  command: `node ${claudeHome}/statusline.mjs`,
+  command: `env -u NODE_OPTIONS node ${claudeHome}/statusline.mjs`,
 };
 
 // -- PreToolUse: agent-start.mjs --
@@ -89,7 +89,7 @@ settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(entry => {
 
 settings.hooks.PreToolUse.push({
   matcher: 'Agent',
-  hooks: [{ type: 'command', command: `node ${claudeHome}/hooks/agent-start.mjs` }],
+  hooks: [{ type: 'command', command: `env -u NODE_OPTIONS node ${claudeHome}/hooks/agent-start.mjs` }],
 });
 
 // -- PostToolUse: agent-end.mjs --
@@ -103,7 +103,7 @@ settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(entry => {
 
 settings.hooks.PostToolUse.push({
   matcher: 'Agent',
-  hooks: [{ type: 'command', command: `node ${claudeHome}/hooks/agent-end.mjs` }],
+  hooks: [{ type: 'command', command: `env -u NODE_OPTIONS node ${claudeHome}/hooks/agent-end.mjs` }],
 });
 
 fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
