@@ -21,14 +21,14 @@ curl -fsSL https://raw.githubusercontent.com/kiheon0709/claude-codex-statusline/
 ## 표시 항목
 
 ```
-~/hkheon/Project/claude-codex-statusline (main) │ Fable 5.1 (high) [thinking off] │ 31m · $2.58
+~/hkheon/Project/claude-codex-statusline (main) │ Fable 5.1 (high) [thinking on] │ 31m · $2.58
 5H ████░░░░░░ 51% (2h 21m) │ Week ████░░░░░░ 40% (2d 6h) │ Context █░░░░░░░░░ 8% │ Cache 59m (97% hit)
 Codex 5H ██░░░░░░░░ 12% (3h 2m)
 Agents: 2×Explore (45s)
 ```
 
 - **Directory / Model** — 현재 작업 디렉터리 + git 브랜치(저장소 안일 때만) + 사용 중인 Claude 모델명 + effort 레벨 (예: `Fable 5.1 (high)`, xhigh/max는 노란색)
-- **Badges** — thinking이 꺼져 있거나 fast mode가 켜져 있을 때만 모델 옆에 `[thinking off, fast]` 노란 배지 표시
+- **Badges** — 모델 옆에 thinking 상태를 항상 표시 (`[thinking on]`은 연한 색, `[thinking off]`는 노란색). fast mode는 켜져 있을 때만 `fast` 배지 추가
 - **Session** — 세션 경과 시간과 추정 비용 (예: `1h 13m · $1.23`)
 - **Cache** — 프롬프트 캐시가 식기까지 남은 시간과 히트율 (예: `Cache 42m (91% hit)`, 식으면 `Cache cold`). 캐시가 만료되면 다음 요청에서 대화 전체를 다시 캐시에 쓰므로 자리 비울 때 참고
 - **Claude 5H / Week / Context** — Claude Code의 공식 statusline 페이로드에서 직접 읽어오는 rate-limit 바 (추가 API 호출 없음)
@@ -53,7 +53,7 @@ node ~/.claude/statusline.mjs on cache            # 다시 켜기
 |------|-----------|
 | `branch` | 디렉터리 옆 git 브랜치 |
 | `effort` | 모델 옆 effort 레벨 |
-| `badges` | `[thinking off]` / `[fast]` 경고 배지 |
+| `badges` | `[thinking on/off]` · `[fast]` 배지 |
 | `session` | 세션 경과 시간 · 추정 비용 |
 | `limits` | Claude 5H / Week 바 |
 | `context` | Context 바 |

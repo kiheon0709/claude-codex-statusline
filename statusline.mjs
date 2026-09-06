@@ -9,7 +9,7 @@ import path from 'path';
 const FEATURES = {
   branch:  'git branch next to the directory',
   effort:  'effort level next to the model (high/max/...)',
-  badges:  '[thinking off] / [fast] warning badges',
+  badges:  '[thinking on/off] and [fast] badges',
   session: 'session elapsed time and estimated cost',
   limits:  'Claude 5H / Week rate-limit bars',
   context: 'Context window usage bar',
@@ -230,11 +230,17 @@ function formatStatus(d) {
   const effort = on('effort') ? d.effort?.level : null;
   const effortColor = (effort === 'xhigh' || effort === 'max') ? C.warn : C.textEffort;
   const effortText = effort ? ' ' + color(`(${effort})`, effortColor) : '';
-  // Badges only when something unusual is on: thinking disabled or fast mode
+  // Badges: thinking state always shown (off = yellow), fast mode only when on
   const badges = [];
-  if (on('badges') && d.thinking?.enabled === false) badges.push('thinking off');
-  if (on('badges') && d.fast_mode === true) badges.push('fast');
-  const badgeText = badges.length ? ' ' + color(`[${badges.join(', ')}]`, C.warn) : '';
+  if (on('badges') && typeof d.thinking?.enabled === 'boolean') {
+    badges.push(d.thinking.enabled
+      ? color('thinking on', C.textEffort)
+      : color('thinking off', C.warn));
+  }
+  if (on('badges') && d.fast_mode === true) badges.push(color('fast', C.warn));
+  const badgeText = badges.length
+    ? ' ' + color('[', C.textDim) + badges.join(color(', ', C.textDim)) + color(']', C.textDim)
+    : '';
   const modelText = color(model, C.textModel) + effortText + badgeText;
   group1.push({ text: modelText, len: visLen(modelText) });
 
