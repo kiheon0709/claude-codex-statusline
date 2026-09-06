@@ -117,6 +117,8 @@ echo "      $CLAUDE_HOME/statusline.mjs"
 echo "      $CLAUDE_HOME/hooks/agent-start.mjs"
 echo "      $CLAUDE_HOME/hooks/agent-end.mjs"
 echo ""
+echo "    Toggle segments:  node $CLAUDE_HOME/statusline.mjs list | on <feature> | off <feature>"
+echo ""
 if [[ -n "${BACKUP:-}" ]]; then
   echo "    settings.json backed up to:"
   echo "      $BACKUP"

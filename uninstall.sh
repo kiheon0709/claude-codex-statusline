@@ -10,7 +10,7 @@ echo "==> Uninstalling Claude Code Statusline"
 echo "==> Target: $CLAUDE_HOME"
 
 # ── Remove installed .mjs files ───────────────────────────────────────────────
-for f in "statusline.mjs" "hooks/agent-start.mjs" "hooks/agent-end.mjs"; do
+for f in "statusline.mjs" "statusline.json" "hooks/agent-start.mjs" "hooks/agent-end.mjs"; do
   target="$CLAUDE_HOME/$f"
   if [[ -f "$target" ]]; then
     rm "$target"

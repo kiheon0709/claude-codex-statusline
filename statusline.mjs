@@ -1,7 +1,57 @@
 import { execSync } from 'child_process';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
+
+// ── Feature toggles ──────────────────────────────────────────────────────────
+// Config lives in ~/.claude/statusline.json as { "disabled": ["cache", ...] }.
+// Manage it with:  node ~/.claude/statusline.mjs list | on <feature> | off <feature>
+const FEATURES = {
+  branch:  'git branch next to the directory',
+  effort:  'effort level next to the model (high/max/...)',
+  badges:  '[thinking off] / [fast] warning badges',
+  session: 'session elapsed time and estimated cost',
+  limits:  'Claude 5H / Week rate-limit bars',
+  context: 'Context window usage bar',
+  cache:   'prompt cache time-to-live and hit ratio',
+  codex:   'Codex CLI usage bars',
+  agents:  'running subagent tracker',
+};
+const CONFIG_PATH = path.join(os.homedir(), '.claude', 'statusline.json');
+
+function loadDisabled() {
+  try {
+    const cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
+    return new Set(Array.isArray(cfg.disabled) ? cfg.disabled : []);
+  } catch {
+    return new Set();
+  }
+}
+
+const DISABLED = loadDisabled();
+const on = name => !DISABLED.has(name);
+
+function runCli(args) {
+  const [cmd, ...names] = args;
+  const names_ok = names.every(n => n in FEATURES);
+  if ((cmd === 'on' || cmd === 'off') && names.length > 0 && names_ok) {
+    for (const n of names) cmd === 'off' ? DISABLED.add(n) : DISABLED.delete(n);
+    writeFileSync(CONFIG_PATH, JSON.stringify({ disabled: [...DISABLED] }, null, 2) + '\n');
+    console.log(`${cmd === 'off' ? 'disabled' : 'enabled'}: ${names.join(', ')}  (${CONFIG_PATH})`);
+    return 0;
+  }
+  if (cmd !== 'list') {
+    console.log('usage: node statusline.mjs list | on <feature...> | off <feature...>\n');
+  }
+  for (const [n, desc] of Object.entries(FEATURES)) {
+    console.log(`  ${on(n) ? 'on ' : 'off'}  ${n.padEnd(8)} ${desc}`);
+  }
+  return cmd === 'list' ? 0 : 1;
+}
+
+if (process.argv.length > 2) {
+  process.exit(runCli(process.argv.slice(2)));
+}
 
 const chunks = [];
 process.stdin.on('data', c => chunks.push(c));
@@ -97,7 +147,6 @@ const C = {
   barContext:   '38;2;176;196;222',   // light steel blue
   barCodex5H:   '38;2;255;182;193',   // light pink
   barCodexWeek: '38;2;221;160;221',   // plum
-  barStale:     '38;2;90;90;90',      // dim gray
   text5H:       '38;2;173;216;230',   // pastel sky
   textWeek:     '38;2;176;196;222',   // pastel steel blue
   textContext:  '38;2;200;220;240',   // very pale blue
@@ -106,6 +155,9 @@ const C = {
   textAgents:   '38;2;255;218;185',   // pastel peach
   textDir:      '38;2;175;238;238',   // pale turquoise
   textModel:    '38;2;221;190;221',   // pastel mauve
+  textEffort:   '38;2;190;170;200',   // muted mauve (effort level)
+  textBranch:   '38;2;152;195;121',   // pastel green (git branch)
+  textCache:    '38;2;170;220;190',   // pale mint (prompt cache)
   textDim:      '38;2;160;160;160',   // neutral dim
   warn:         '38;2;255;223;128',   // pastel yellow (≥80%)
   alert:        '38;2;255;153;153',   // pastel red (≥95%)
@@ -125,7 +177,19 @@ function fmtElapsed(ms) {
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
-  return `${h}h`;
+  return `${h}h ${m % 60}m`;
+}
+
+function gitBranch(dir) {
+  try {
+    return execSync(`git -C "${dir}" symbolic-ref --short -q HEAD`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 200,
+    }).trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 function formatStatus(d) {
@@ -155,16 +219,37 @@ function formatStatus(d) {
   const rawDir = d.workspace?.current_dir || d.cwd || '~';
   const home = os.homedir();
   const dir = home && rawDir.startsWith(home) ? '~' + rawDir.slice(home.length) : rawDir;
-  const dirText = color(dir, C.textDir);
+  // Git branch: prefer the worktree branch from the payload, else ask git; hidden outside repos
+  const branch = on('branch') ? (d.worktree?.branch || gitBranch(rawDir)) : null;
+  const branchText = branch ? ' ' + color(`(${branch})`, C.textBranch) : '';
+  const dirText = color(dir, C.textDir) + branchText;
   group1.push({ text: dirText, len: visLen(dirText) });
 
   const model = d.model?.display_name || '?';
-  const modelText = color(model, C.textModel);
+  // Effort level (low/medium/high/xhigh/max) — present only when the model supports it
+  const effort = on('effort') ? d.effort?.level : null;
+  const effortColor = (effort === 'xhigh' || effort === 'max') ? C.warn : C.textEffort;
+  const effortText = effort ? ' ' + color(`(${effort})`, effortColor) : '';
+  // Badges only when something unusual is on: thinking disabled or fast mode
+  const badges = [];
+  if (on('badges') && d.thinking?.enabled === false) badges.push('thinking off');
+  if (on('badges') && d.fast_mode === true) badges.push('fast');
+  const badgeText = badges.length ? ' ' + color(`[${badges.join(', ')}]`, C.warn) : '';
+  const modelText = color(model, C.textModel) + effortText + badgeText;
   group1.push({ text: modelText, len: visLen(modelText) });
+
+  // Session elapsed time + estimated cost
+  const cost = d.cost;
+  if (on('session') && cost?.total_duration_ms) {
+    const parts = [fmtElapsed(cost.total_duration_ms)];
+    if (typeof cost.total_cost_usd === 'number') parts.push(`$${cost.total_cost_usd.toFixed(2)}`);
+    const t = color(parts.join(' · '), C.textDim);
+    group1.push({ text: t, len: visLen(t) });
+  }
 
   // ── Group 2: 5H, Week, Context ────────────────────────────────────────────
   const fiveH = d.rate_limits?.five_hour;
-  if (fiveH) {
+  if (on('limits') && fiveH) {
     const nowSec = Math.floor(Date.now() / 1000);
     const isStale = fiveH.resets_at && fiveH.resets_at < nowSec;
     if (isStale) {
@@ -185,7 +270,7 @@ function formatStatus(d) {
   }
 
   const sevenD = d.rate_limits?.seven_day;
-  if (sevenD) {
+  if (on('limits') && sevenD) {
     const nowSec = Math.floor(Date.now() / 1000);
     const isStale = sevenD.resets_at && sevenD.resets_at < nowSec;
     if (isStale) {
@@ -206,7 +291,7 @@ function formatStatus(d) {
   }
 
   const ctx = d.context_window;
-  if (ctx) {
+  if (on('context') && ctx) {
     const pct = ctx.used_percentage ?? 0;
     const rounded = Math.round(pct);
     // Context: no budget prefix (ephemeral, different semantics)
@@ -215,49 +300,46 @@ function formatStatus(d) {
     group2.push({ text: t, len: visLen(t) });
   }
 
-  // ── Group 3: Codex 5H, Codex Week ────────────────────────────────────────
-  const codexLimits = getCodexRateLimits();
+  // Prompt cache: time left before the cache goes cold (then the whole conversation is re-written)
+  const cache = d.prompt_cache;
+  if (on('cache') && cache) {
+    const left = cache.warm ? fmtReset(cache.expires_at) : '';
+    let t;
+    if (left) {
+      const hit = (typeof cache.hit_ratio === 'number' && barW > 0)
+        ? color(` (${Math.round(cache.hit_ratio * 100)}% hit)`, C.textDim) : '';
+      t = color(`Cache ${left}`, C.textCache) + hit;
+    } else {
+      t = color('Cache cold', C.textDim);
+    }
+    group2.push({ text: t, len: visLen(t) });
+  }
+
+  // ── Group 3: Codex windows (5H / Week / 30D, whichever the CLI reports) ─────
+  const codexLimits = on('codex') ? getCodexRateLimits() : null;
   if (codexLimits) {
-    const { primary, secondary } = codexLimits;
     const nowSec = Math.floor(Date.now() / 1000);
-
-    // #4: Stale indicator — when resets_at < now, show dash instead of pct
-    const fiveHStale = !!(primary.resets_at && primary.resets_at < nowSec);
-    if (fiveHStale) {
-      const sp = barW > 0 ? ' ' : '';
-      const t1 = color('Codex 5H ', C.barStale) + bar(0, barW, C.barStale) + color(`${sp}—`, C.barStale);
-      group3.push({ text: t1, len: visLen(t1) });
-    } else {
-      const sp = barW > 0 ? ' ' : '';
-      const fiveHPct = primary.used_percent ?? 0;
-      const fiveHRounded = Math.round(fiveHPct);
-      const fiveHReset = fmtReset(primary.resets_at);
-      const fiveHResetStr = (fiveHReset && barW > 0) ? color(` (${fiveHReset})`, C.textDim) : '';
-      const fiveHPrefix = budgetPrefix(fiveHPct);
-      const t1 = fiveHPrefix + color('Codex 5H ', C.textCodex5H) + bar(fiveHPct, barW, C.barCodex5H) + color(`${sp}${fiveHRounded}%`, C.textCodex5H) + fiveHResetStr;
-      group3.push({ text: t1, len: visLen(t1) });
-    }
-
-    const sevenDStale = !!(secondary.resets_at && secondary.resets_at < nowSec);
-    if (sevenDStale) {
-      const sp = barW > 0 ? ' ' : '';
-      const t2 = color('Codex Week ', C.barStale) + bar(0, barW, C.barStale) + color(`${sp}—`, C.barStale);
-      group3.push({ text: t2, len: visLen(t2) });
-    } else {
-      const sp = barW > 0 ? ' ' : '';
-      const sevenDPct = secondary.used_percent ?? 0;
-      const sevenDRounded = Math.round(sevenDPct);
-      const sevenDReset = fmtReset(secondary.resets_at);
-      const sevenDResetStr = (sevenDReset && barW > 0) ? color(` (${sevenDReset})`, C.textDim) : '';
-      const sevenDPrefix = budgetPrefix(sevenDPct);
-      const t2 = sevenDPrefix + color('Codex Week ', C.textCodexWeek) + bar(sevenDPct, barW, C.barCodexWeek) + color(`${sp}${sevenDRounded}%`, C.textCodexWeek) + sevenDResetStr;
-      group3.push({ text: t2, len: visLen(t2) });
-    }
+    const sp = barW > 0 ? ' ' : '';
+    const styles = [
+      { bar: C.barCodex5H, text: C.textCodex5H },
+      { bar: C.barCodexWeek, text: C.textCodexWeek },
+    ];
+    codexLimits.forEach((win, i) => {
+      const label = `Codex ${fmtWindow(win.window_minutes)} `;
+      const style = styles[i] ?? styles[1];
+      // Stale window (reset time already passed) → hide; reappears once Codex is used again
+      if (win.resets_at && win.resets_at < nowSec) return;
+      const pct = win.used_percent ?? 0;
+      const reset = fmtReset(win.resets_at);
+      const resetStr = (reset && barW > 0) ? color(` (${reset})`, C.textDim) : '';
+      const t = budgetPrefix(pct) + color(label, style.text) + bar(pct, barW, style.bar) + color(`${sp}${Math.round(pct)}%`, style.text) + resetStr;
+      group3.push({ text: t, len: visLen(t) });
+    });
   }
 
   // ── Group 4: Live subagent tracker ───────────────────────────────────────
   const group4 = [];
-  const agents = getActiveAgents();
+  const agents = on('agents') ? getActiveAgents() : [];
   if (agents.length > 0) {
     const counts = {};
     const oldestStart = {};  // #5: track oldest startedAt per label
@@ -293,10 +375,12 @@ function bar(pct, width, colorCode) {
   return `\x1b[${colorCode}m${'█'.repeat(filled)}${'░'.repeat(empty)}\x1b[0m`;
 }
 
-function fmtTokens(n) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
-  return String(n);
+// Codex window label from its length in minutes
+function fmtWindow(mins) {
+  if (!mins) return '5H';
+  if (mins <= 300) return '5H';
+  if (mins <= 10080) return 'Week';
+  return `${Math.round(mins / 1440)}D`;
 }
 
 function fmtReset(epoch) {
@@ -311,34 +395,13 @@ function fmtReset(epoch) {
   return `${mins}m`;
 }
 
-// Fish-style short path: abbreviate all middle segments to first letter,
-// keep first (~ or root) and last segment.
-// e.g. /Users/hong-giheon/hkheon/Project/A-one_v4 → ~/h/P/A-one_v4
-function shortPath(p) {
-  const home = os.homedir();
-  if (home && p.startsWith(home)) p = '~' + p.slice(home.length);
-
-  const parts = p.split('/').filter((s, i) => i === 0 || s !== '');
-  if (parts.length <= 3) return p;
-
-  const first = parts[0]; // '' or '~'
-  const last = parts[parts.length - 1];
-  const middle = parts.slice(1, -1).map(s => s[0] || s);
-  return [first, ...middle, last].join('/');
-}
-
 function getCodexRateLimits() {
   try {
     const sessionsBase = `${os.homedir()}/.codex/sessions`;
-    // Find the most recent JSONL file by listing year/month/day dirs sorted
-    const listResult = execSync(
-      `ls -1d "${sessionsBase}"/????/??/?? 2>/dev/null | sort | tail -1`,
-      { timeout: 500 }
-    ).toString().trim();
-    if (!listResult) return null;
-
+    // Most recently written rollout file across all sessions (mtime, not filename),
+    // so concurrent Codex sessions don't surface a stale one
     const latestFile = execSync(
-      `ls -1 "${listResult}"/rollout-*.jsonl 2>/dev/null | sort | tail -1`,
+      `ls -t "${sessionsBase}"/????/??/??/rollout-*.jsonl 2>/dev/null | head -1`,
       { timeout: 500 }
     ).toString().trim();
     if (!latestFile) return null;
@@ -363,11 +426,9 @@ function getCodexRateLimits() {
       rl = JSON.parse(m[1]);
     }
 
-    const primary = rl?.primary;
-    const secondary = rl?.secondary;
-    if (!primary || !secondary) return null;
-
-    return { primary, secondary };
+    // Newer Codex builds report only `primary` (secondary: null) — show whatever exists
+    const windows = [rl?.primary, rl?.secondary].filter(w => w && typeof w === 'object');
+    return windows.length ? windows : null;
   } catch {
     return null;
   }
