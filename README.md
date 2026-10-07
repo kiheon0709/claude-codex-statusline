@@ -2,7 +2,7 @@
 
 Claude Code + Codex CLI 사용량을 터미널 상태바에 실시간으로 표시하는 statusline 스크립트.
 
-**English:** A statusline for Claude Code that displays rate-limit usage bars, context window, prompt-cache TTL, effort level, git branch, session time, Codex CLI budgets, and active subagent counts — all rendered inline in the Claude Code TUI. Every segment can be toggled on/off.
+**English:** A statusline for Claude Code that displays rate-limit usage bars (including the Fable weekly limit), context window, prompt-cache TTL, effort level, git branch, session time, Codex CLI budgets, and active subagent counts — all rendered inline in the Claude Code TUI. Every segment can be toggled on/off.
 
 ![screenshot](./docs/screenshot.png)
 
@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/kiheon0709/claude-codex-statusline/
 
 ```
 ~/hkheon/Project/claude-codex-statusline (main) │ Fable 5.1 (high) [thinking on] │ 31m · $2.58
-5H ████░░░░░░ 51% (2h 21m) │ Week ████░░░░░░ 40% (2d 6h) │ Context █░░░░░░░░░ 8% │ Cache 59m (97% hit)
+5H ████░░░░░░ 51% (2h 21m) │ Week ████░░░░░░ 40% (2d 6h) │ Fable ███░░░░░░░ 34% (3d 2h) │ Context █░░░░░░░░░ 8% │ Cache 59m (97% hit)
 Codex 5H ██░░░░░░░░ 12% (3h 2m)
 Agents: 2×Explore (45s)
 ```
@@ -32,6 +32,7 @@ Agents: 2×Explore (45s)
 - **Session** — 세션 경과 시간과 추정 비용 (예: `1h 13m · $1.23`)
 - **Cache** — 프롬프트 캐시가 식기까지 남은 시간과 히트율 (예: `Cache 42m (91% hit)`, 식으면 `Cache cold`). 캐시가 만료되면 다음 요청에서 대화 전체를 다시 캐시에 쓰므로 자리 비울 때 참고
 - **Claude 5H / Week / Context** — Claude Code의 공식 statusline 페이로드에서 직접 읽어오는 rate-limit 바 (추가 API 호출 없음)
+- **Fable** — Fable 모델 전용 주간 한도 바 (`/usage`의 "Current week (Fable)"와 같은 값). statusline 페이로드에 없어서 사용량 조회 API로 가져오며, 최대 5분에 한 번 갱신. 값을 못 받으면 숨김
 - **Codex 5H / Week / 30D** — 로컬 `~/.codex/sessions/.../rollout-*.jsonl` 파일에서 파싱하는 Codex CLI 사용량 바. Codex가 보고하는 창(`window_minutes`)에 맞춰 라벨을 붙이며, 최신 Codex처럼 창이 하나만 오면 하나만 표시. 리셋 시각이 지난(오래된 로그) 창은 숨김
 - **Active Agents** — PreToolUse/PostToolUse 훅으로 추적하는 실행 중인 서브에이전트 카운터 (시작 후 경과 시간 포함)
 
@@ -56,6 +57,7 @@ node ~/.claude/statusline.mjs on cache            # 다시 켜기
 | `badges` | `[thinking on/off]` · `[fast]` 배지 |
 | `session` | 세션 경과 시간 · 추정 비용 |
 | `limits` | Claude 5H / Week 바 |
+| `fable` | Fable 주간 한도 바 (사용량 조회 API 호출) |
 | `context` | Context 바 |
 | `cache` | 프롬프트 캐시 남은 시간 · 히트율 |
 | `codex` | Codex 사용량 바 |
@@ -104,11 +106,13 @@ curl -fsSL https://raw.githubusercontent.com/kiheon0709/claude-codex-statusline/
 
 **Claude 데이터**: Claude Code가 statusline 커맨드를 실행할 때 stdin으로 JSON 페이로드를 전달합니다. `statusline.mjs`는 이 페이로드에서 `rate_limits`, `context_window`, `prompt_cache`, `model`, `effort`, `thinking`, `fast_mode`, `cost`, `workspace` 등을 읽어 바를 렌더링합니다. 별도 네트워크 호출 없음.
 
+**Fable 데이터**: Fable 주간 한도는 statusline 페이로드에 포함되지 않아서, `/usage` 명령과 같은 사용량 조회 API(`api.anthropic.com/api/oauth/usage`)로 가져옵니다. Claude Code의 로그인 토큰(macOS Keychain `Claude Code-credentials`, 그 외 `~/.claude/.credentials.json`)을 요청 헤더에만 사용하고 어디에도 저장하지 않습니다. 결과는 `~/.claude/statusline-usage.json`에 캐시되며, 캐시가 5분보다 오래되면 백그라운드 프로세스가 갱신하므로 statusline 렌더링은 네트워크를 기다리지 않습니다. 모델 호출이 아니라 조회용 API라서 토큰 사용량이나 비용이 들지 않습니다. 원치 않으면 `off fable`로 끄세요.
+
 **Codex 데이터**: `~/.codex/sessions/` 하위에서 가장 최근에 수정된(mtime 기준) `rollout-*.jsonl` 파일에서 `grep`으로 `rate_limits` 키가 포함된 마지막 줄을 추출해 JSON 파싱합니다. 파일 크기에 무관하게 빠릅니다.
 
 **Agent 추적**: `hooks/agent-start.mjs`(PreToolUse)와 `hooks/agent-end.mjs`(PostToolUse)가 `Agent` 툴 호출 시마다 OS 임시 디렉터리(`os.tmpdir()`)의 `claude-agents.json`을 원자적으로 업데이트합니다. Statusline은 이 파일을 읽어 현재 실행 중인 서브에이전트를 표시합니다.
 
-**텔레메트리 없음.** 설치 스크립트의 파일 다운로드 외에 네트워크 통신은 없습니다.
+**텔레메트리 없음.** 설치 스크립트의 파일 다운로드와 위의 Fable 사용량 조회(Anthropic API, `fable` 기능이 켜져 있을 때만) 외에 네트워크 통신은 없습니다.
 
 ---
 
@@ -122,6 +126,7 @@ curl -fsSL https://raw.githubusercontent.com/kiheon0709/claude-codex-statusline/
 | `~/.claude/hooks/agent-start.mjs` | Agent PreToolUse 훅 |
 | `~/.claude/hooks/agent-end.mjs` | Agent PostToolUse 훅 |
 | `~/.claude/statusline.json` | 기능 on/off 설정 (처음 `off` 실행 시 생성) |
+| `~/.claude/statusline-usage.json` | Fable 사용량 캐시 (사용량 수치만 저장, 토큰 없음) |
 
 `~/.claude/settings.json`에 추가되는 키:
 

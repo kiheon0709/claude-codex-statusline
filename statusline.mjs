@@ -1,7 +1,8 @@
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import { readFileSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 // ── Feature toggles ──────────────────────────────────────────────────────────
 // Config lives in ~/.claude/statusline.json as { "disabled": ["cache", ...] }.
@@ -12,12 +13,14 @@ const FEATURES = {
   badges:  '[thinking on/off] and [fast] badges',
   session: 'session elapsed time and estimated cost',
   limits:  'Claude 5H / Week rate-limit bars',
+  fable:   'Fable weekly limit bar (asks the usage API at most every 5 min)',
   context: 'Context window usage bar',
   cache:   'prompt cache time-to-live and hit ratio',
   codex:   'Codex CLI usage bars',
   agents:  'running subagent tracker',
 };
 const CONFIG_PATH = path.join(os.homedir(), '.claude', 'statusline.json');
+const USAGE_CACHE = path.join(os.homedir(), '.claude', 'statusline-usage.json');
 
 function loadDisabled() {
   try {
@@ -47,6 +50,12 @@ function runCli(args) {
     console.log(`  ${on(n) ? 'on ' : 'off'}  ${n.padEnd(8)} ${desc}`);
   }
   return cmd === 'list' ? 0 : 1;
+}
+
+// Detached child spawned by getFableLimit() to refresh the usage cache
+if (process.argv[2] === '--refresh-usage') {
+  await refreshUsage();
+  process.exit(0);
 }
 
 if (process.argv.length > 2) {
@@ -144,11 +153,13 @@ function packSegments(segments, termWidth) {
 const C = {
   bar5H:        '38;2;135;206;250',   // light sky blue
   barWeek:      '38;2;100;149;237',   // cornflower blue
+  barFable:     '38;2;147;112;219',   // medium purple
   barContext:   '38;2;176;196;222',   // light steel blue
   barCodex5H:   '38;2;255;182;193',   // light pink
   barCodexWeek: '38;2;221;160;221',   // plum
   text5H:       '38;2;173;216;230',   // pastel sky
   textWeek:     '38;2;176;196;222',   // pastel steel blue
+  textFable:    '38;2;200;185;240',   // pastel lavender
   textContext:  '38;2;200;220;240',   // very pale blue
   textCodex5H:  '38;2;255;200;210',   // pastel pink
   textCodexWeek:'38;2;230;200;230',   // pastel plum
@@ -296,6 +307,20 @@ function formatStatus(d) {
     }
   }
 
+  // Fable weekly window — not in the payload, comes from the usage-API cache
+  const fable = on('fable') ? getFableLimit() : null;
+  if (fable) {
+    const sp = barW > 0 ? ' ' : '';
+    const isStale = fable.resets_at && fable.resets_at < Math.floor(Date.now() / 1000);
+    const pct = isStale ? 0 : fable.used_percentage;
+    const reset = fmtReset(fable.resets_at);
+    const suffix = barW === 0 ? ''
+      : isStale ? color(' (ready)', C.textDim)
+      : reset ? color(` (${reset})`, C.textDim) : '';
+    const t = budgetPrefix(pct) + color('Fable ', C.textFable) + bar(pct, barW, C.barFable) + color(`${sp}${Math.round(pct)}%`, C.textFable) + suffix;
+    group2.push({ text: t, len: visLen(t) });
+  }
+
   const ctx = d.context_window;
   if (on('context') && ctx) {
     const pct = ctx.used_percentage ?? 0;
@@ -438,6 +463,69 @@ function getCodexRateLimits() {
   } catch {
     return null;
   }
+}
+
+// Fable's weekly window only exists in the usage API (what /usage shows), so the
+// statusline reads a cache and, when it is older than 5 min, spawns a detached
+// child to refresh it — rendering never waits on the network.
+const USAGE_TTL_MS = 5 * 60 * 1000;
+
+function getFableLimit() {
+  let cache = {};
+  try {
+    cache = JSON.parse(readFileSync(USAGE_CACHE, 'utf8'));
+  } catch {}
+  if (!(Date.now() - (cache.checkedAt ?? 0) < USAGE_TTL_MS)) {
+    try {
+      // Bump checkedAt first so concurrent renders don't spawn duplicate refreshes
+      writeFileSync(USAGE_CACHE, JSON.stringify({ ...cache, checkedAt: Date.now() }));
+      spawn(process.execPath, [fileURLToPath(import.meta.url), '--refresh-usage'], {
+        detached: true,
+        stdio: 'ignore',
+      }).unref();
+    } catch {}
+  }
+  return cache.fable ?? null;
+}
+
+// Claude Code's OAuth credentials: macOS Keychain, else ~/.claude/.credentials.json
+function readCredentials() {
+  if (process.platform === 'darwin') {
+    try {
+      return execSync('security find-generic-password -s "Claude Code-credentials" -w', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 2000,
+      });
+    } catch {}
+  }
+  return readFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8');
+}
+
+async function refreshUsage() {
+  let fable = null;
+  try {
+    const oauth = JSON.parse(readCredentials()).claudeAiOauth;
+    // Expired token → skip; Claude Code refreshes it on its next request
+    if (oauth?.accessToken && !(oauth.expiresAt < Date.now())) {
+      const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
+        headers: {
+          Authorization: `Bearer ${oauth.accessToken}`,
+          'anthropic-beta': 'oauth-2025-04-20',
+        },
+        signal: AbortSignal.timeout(5000),
+      });
+      const body = await res.json();
+      // Per-model weekly windows: limits[] entries scoped to a model by display name
+      const win = (body.limits ?? []).find(l => /fable/i.test(l?.scope?.model?.display_name ?? ''));
+      if (win && typeof win.percent === 'number') {
+        const t = typeof win.resets_at === 'string' ? Date.parse(win.resets_at) / 1000 : win.resets_at;
+        fable = { used_percentage: win.percent, resets_at: Number.isFinite(t) ? Math.floor(t) : null };
+      }
+    }
+  } catch {}
+  // Failure writes null, so the bar hides instead of showing stale numbers
+  writeFileSync(USAGE_CACHE, JSON.stringify({ checkedAt: Date.now(), fable }));
 }
 
 function getActiveAgents() {
